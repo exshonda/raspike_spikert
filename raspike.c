@@ -21,6 +21,8 @@
 extern void wup_pybricks(void);
 
 
+#define DETECT_COM_FAIL_PERIOD 5000000
+
 #define RASPIKE_PORTNO  1
 
 int32_t color_sensor_mode = 0;
@@ -33,6 +35,21 @@ int32_t gyro_sensor_mode = 0;
 int32_t gyro_reset = 0;
 
 int32_t other_command = 0;
+
+uint32_t num_command = 0;
+uint32_t num_fail = 0;
+
+uint32_t last_command_time = 0;
+
+uint8_t motor_reset_A = 0;
+uint8_t motor_reset_B = 0;
+uint8_t motor_reset_C = 0;
+uint8_t motor_stop_A = 0;
+uint8_t motor_stop_B = 0;
+uint8_t motor_stop_C = 0;
+
+uint8_t gyro_sensor_mode_change = 0;
+
 
 #define SEND_PACKET_SIZE (sizeof("@0000:000000"))
 
@@ -65,13 +82,22 @@ send_ack(int cmd)
     send_data(cmd, 0);    
 }
 
+static void
+detect_com_fail(void) {
+#if 0    
+    hub.display.show(hub.Image.SAD,delay=400,clear=True,wait=False,loop=False,fade=0)
+    hub.led(9)
+#endif      
+}
+
 void
 notify_sensor_task(intptr_t exinf) {
     static uint8_t mscnt = 0;
-    
+    SYSTIM tim;
+
     // カラーセンサーの切り替えがあった場合、タイミングによってはget()がNoneになったり、
     // RGBではない値が取れたりするので、その場合は次の周期で通知する
-    
+      
     if (color_sensor_mode == 1) {        
 #if 0
         color_val = color_sensor.get()
@@ -157,41 +183,50 @@ notify_sensor_task(intptr_t exinf) {
 
     //Ackの処理
     //モーターリセット
-#if 0    
-        if motor_reset_A == 1:
-            motor_reset_A = 0
-            send_ack(9)
-        if motor_reset_B == 1:
-            motor_reset_B = 0
-            send_ack(10)
-        if motor_reset_C == 1:
-            motor_reset_C = 0
-            send_ack(11)
-        if color_sensor_change == 1:
-            color_sensor_change = 0
-            send_ack(61)
-        if ultrasonic_sensor_change == 1:
-            ultrasonic_sensor_change = 0
-            send_ack(62)
-        if gyro_reset == 1:
-            gyro_reset = 0
-            send_ack(13)
-        if gyro_sensor_mode_change == 1:
-            gyro_sensor_mode_change = 0
-            send_ack(63)
-        if motor_stop_A == 1:
-            motor_stop_A = 0
-            send_ack(5)
-        if motor_stop_B == 1:
-            motor_stop_B = 0
-            send_ack(6)
-        if motor_stop_C == 1:
-            motor_stop_C = 0
-            send_ack(7)
-        if other_command != 0:
-            send_ack(other_command)
-            other_command =0
-#endif
+    if (motor_reset_A == 1) {
+        motor_reset_A = 0;
+        send_ack(9);
+    }
+    if (motor_reset_B == 1) {
+        motor_reset_B = 0;
+        send_ack(10);
+    }
+    if (motor_reset_C == 1) {
+        motor_reset_C = 0;
+        send_ack(11);
+    }
+    if (color_sensor_change == 1) {
+        color_sensor_change = 0;
+        send_ack(61);
+    }
+    if (ultrasonic_sensor_change == 1) {
+        ultrasonic_sensor_change = 0;
+        send_ack(62);
+    }
+    if (gyro_reset == 1) {
+        gyro_reset = 0;
+        send_ack(13);
+    }
+    if (gyro_sensor_mode_change == 1) {
+        gyro_sensor_mode_change = 0;
+        send_ack(63);
+    }
+    if (motor_stop_A == 1) {
+        motor_stop_A = 0;
+        send_ack(5);
+    }
+    if (motor_stop_B == 1) {
+        motor_stop_B = 0;
+        send_ack(6);
+    }
+    if (motor_stop_C == 1) {
+        motor_stop_C = 0;
+        send_ack(7);
+    }
+    if (other_command != 0) {
+        send_ack(other_command);
+        other_command =0;
+    }
               
     /* 100ms周期 */
     if (++mscnt == 10) {
@@ -217,11 +252,21 @@ notify_sensor_task(intptr_t exinf) {
             long_period = cur + long_period_time_us
             long_period_count = long_period_count + 1
 #endif              
+    }
+
+    // 最終の有効コマンドを受け取ってから5秒経ったら、通信断絶として、画面表示を変える
+    get_tim(&tim);
+    if ((last_command_time + DETECT_COM_FAIL_PERIOD < tim)) {
+        detect_com_fail();
     }    
 }
 
-uint32_t num_command = 0;
-uint32_t num_fail = 0;
+
+void
+wait_read(char *buf, int size)
+{
+    serial_rea_dat(RASPIKE_PORTNO, buf, 1);
+}
 
 
 void
@@ -231,18 +276,17 @@ receiver_task(intptr_t exinf) {
     uint8_t idx;
     uint8_t cmd_id;
     int32_t value;
-    uint32_t last_command_time;
     SYSTIM tim;
     
     while(1) {
         while(1) {
-            serial_rea_dat(RASPIKE_PORTNO, (char*)&cmd, 1);
+            wait_read((char*)&cmd, 1);
             if (cmd & 0x80U)
                 break;
         }
         
         while(1) {
-            serial_rea_dat(RASPIKE_PORTNO, (char*)&data1, 1);
+            wait_read((char*)&data1, 1);
             num_command++;
             if (data1 & 0x80U) {
                 cmd = data1;
@@ -251,7 +295,7 @@ receiver_task(intptr_t exinf) {
             }
             idx = cmd & 0x7FU;
 
-            serial_rea_dat(RASPIKE_PORTNO, (char*)&data2, 1);
+            wait_read((char*)&data2, 1);
             num_command++;
             if (data1 & 0x80U) {
                 cmd = data2;
@@ -291,7 +335,7 @@ receiver_task(intptr_t exinf) {
             else {
                 // motor_A.float()
             }
-            // motor_stop_A = 1
+            motor_stop_A = 1;
         }
         else if (cmd_id == 6) {
             if (value == 1) {
@@ -300,7 +344,7 @@ receiver_task(intptr_t exinf) {
             else {
                 // motor_B.float()
             }
-            // motor_stop_B = 1
+            motor_stop_B = 1;
         }
         else if (cmd_id == 7) {
             if (value == 1) {
@@ -309,19 +353,19 @@ receiver_task(intptr_t exinf) {
             else {
                 // motor_C.float()
             }
-            // motor_stop_C = 1
+            motor_stop_C = 1;
         }
         else if (cmd_id == 9) {                  
             // motor_A.preset(0)
-            // motor_reset_A = 1
+            motor_reset_A = 1;
         }
         else if (cmd_id == 10) {                  
             // motor_B.preset(0)
-            // motor_reset_B = 1
+            motor_reset_B = 1;
         }
         else if (cmd_id == 11) {                  
             // motor_C.preset(0)
-            // motor_reset_C = 1
+             motor_reset_C = 1;
         }
         else if (cmd_id == 61) {                  
             // Port2 Color Sensor
