@@ -37,11 +37,19 @@ $ make
 	- 超音波センサー : F -> D
 	- serial通信     : D -> F
 
-## Raspberry Pi -> SPIKE 送信フォーマット
+## Raspberry Pi -> SPIKE 送信
 
 - データを受信するとパケット解析を開始
 
-## SPIKE -> Raspberry Pi 送信フォーマット
+- void receiver_task(intptr_t exinf)
+	- 受信タスク
+	- オリジナル関数 async def receiver():
+
+## SPIKE -> Raspberry Pi 送信
 
 - 10msec毎に送信
 - 100msec毎に送信
+
+- void notify_sensor_task(intptr_t exinf)
+	- 送信タスク
+	- オリジナル関数 sync def notifySensorValues():
